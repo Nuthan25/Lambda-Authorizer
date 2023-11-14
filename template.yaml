@@ -1,0 +1,188 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'WebSocket Chat App with Connect and Disconnect Lambda functions'
+
+Resources:
+  WebsocketAPI:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: 'web-auth'
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: $request.body.action
+    Metadata:
+      SamResourceId: WebsocketAPI
+
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: WebsocketAPI
+      RouteKey: $connect
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref MyWebSocketAuthorizer
+      OperationName: ConnectRoute
+      Target:
+        Fn::Join:
+        - /
+        - - integrations
+          - Ref: ConnectInteg
+    Metadata:
+      SamResourceId: ConnectRoute
+
+  ConnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId:
+        Ref: WebsocketAPI
+      Description: Connect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri:
+        Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConnectLambdaFunction.Arn}/invocations
+    Metadata:
+      SamResourceId: ConnectInteg
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: WebsocketAPI
+      RouteKey: $default
+      AuthorizationType: NONE
+      OperationName: DisconnectRoute
+      Target:
+        Fn::Join:
+        - /
+        - - integrations
+          - Ref: DisconnectInteg
+    Metadata:
+      SamResourceId: DisconnectRoute
+
+  DisconnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId:
+        Ref: WebsocketAPI
+      Description: Disconnect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri:
+        Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DisconnectLambdaFunction.Arn}/invocations
+    Metadata:
+      SamResourceId: DisconnectInteg
+
+  MyWebSocketAuthorizer:
+    Type: 'AWS::ApiGatewayV2::Authorizer'
+    Properties:
+      ApiId: !Ref WebsocketAPI
+      AuthorizerType: REQUEST
+      AuthorizerUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations
+      IdentitySource:
+        - "route.request.querystring.authorizationToken"
+      Name: MyWebSocketAuthorizer
+
+  Deployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn:
+    - ConnectRoute
+    - DisconnectRoute
+    Properties:
+      ApiId:
+        Ref: WebsocketAPI
+    Metadata:
+      SamResourceId: Deployment
+
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: 'dev'
+      DeploymentId:
+        Ref: Deployment
+      ApiId:
+        Ref: WebsocketAPI
+    Metadata:
+      SamResourceId: Stage
+
+  ConnectLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Lambda to Connect to Websocket
+      FunctionName: 'websocconnect'
+      CodeUri: webconnect/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          accept: application/json
+          contentType: application/json
+          endpoint: https://x37hqlym44.execute-api.us-west-2.amazonaws.com/dev/
+          modelId: ai21.j2-ultra-v1
+      Runtime: python3.9
+      Policies:
+      - AmazonAPIGatewayInvokeFullAccess
+    Metadata:
+      SamResourceId: ConnectLambdaFunction
+
+  OnConnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+    - WebsocketAPI
+#    - ConnectLambdaFunction
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: ConnectLambdaFunction
+      Principal: apigateway.amazonaws.com
+    Metadata:
+      SamResourceId: OnConnectPermission
+
+  DisconnectLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Lambda to disconnect from Websocket
+      FunctionName: 'websocdefalt'
+      CodeUri: webmessage/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Timeout: 60
+      Policies:
+      - AmazonAPIGatewayInvokeFullAccess
+    Metadata:
+      SamResourceId: DisconnectLambdaFunction
+
+  OnDisconnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+    - WebsocketAPI
+#    - DisconnectLambdaFunction
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: DisconnectLambdaFunction
+      Principal: apigateway.amazonaws.com
+    Metadata:
+      SamResourceId: OnDisconnectPermission
+
+  LambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Lambda to disconnect from Websocket
+      FunctionName: 'websocauth'
+      CodeUri: webauth/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Timeout: 60
+      Policies:
+        - AmazonAPIGatewayInvokeFullAccess
+    Metadata:
+      SamResourceId: LambdaFunction
+
+  LambdaFunctionPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - WebsocketAPI
+    #    - DisconnectLambdaFunction
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: LambdaFunction
+      Principal: apigateway.amazonaws.com
+    Metadata:
+      SamResourceId: LambdaFunctionPermission
+
